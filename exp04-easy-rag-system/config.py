@@ -6,14 +6,16 @@ COLLECTION_NAME = "medical_rag_lite" # Use a different name if needed
 DATA_FILE = "./data/processed_data.json"
 
 # Model Configuration
-# Example: 'all-MiniLM-L6-v2' (dim 384), 'thenlper/gte-large' (dim 1024)
-EMBEDDING_MODEL_NAME = 'all-MiniLM-L6-v2'
-GENERATION_MODEL_NAME = "Qwen/Qwen2.5-0.5B"
-EMBEDDING_DIM = 384 # Must match EMBEDDING_MODEL_NAME
+# 使用更轻量的中文嵌入模型
+EMBEDDING_MODEL_NAME = 'moka-ai/m3e-base'
+GENERATION_MODEL_NAME = "ollama"  # 使用 ollama API
+OLLAMA_MODEL = "qwen3:8b"  # ollama 部署的模型
+OLLAMA_BASE_URL = "http://localhost:11434"  # ollama API 地址
+EMBEDDING_DIM = 768 # m3e-base 的维度
 
 # Indexing and Search Parameters
 MAX_ARTICLES_TO_INDEX = 500
-TOP_K = 3
+TOP_K = 5  # 增加到 5 以提高召回率
 # Milvus index parameters (adjust based on data size and needs)
 INDEX_METRIC_TYPE = "L2" # Or "IP"
 INDEX_TYPE = "IVF_FLAT"  # Milvus Lite 支持的索引类型
@@ -23,7 +25,7 @@ INDEX_PARAMS = {"nlist": 128}
 SEARCH_PARAMS = {"nprobe": 16}
 
 # Generation Parameters
-MAX_NEW_TOKENS_GEN = 512
+MAX_NEW_TOKENS_GEN = 1024  # 增加到1024，避免回答截断
 TEMPERATURE = 0.7
 TOP_P = 0.9
 REPETITION_PENALTY = 1.1

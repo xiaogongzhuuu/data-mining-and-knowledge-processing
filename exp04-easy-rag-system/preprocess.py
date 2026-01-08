@@ -1,60 +1,34 @@
 import os
 import json
-from bs4 import BeautifulSoup
 import re
 
-def extract_text_and_title_from_html(html_filepath):
+def extract_text_and_title_from_txt(txt_filepath):
     """
-    从指定的 HTML 文件中提取标题和正文文本。
+    从指定的 txt 文件中提取标题和正文文本。
 
     Args:
-        html_filepath (str): HTML 文件的路径。
+        txt_filepath (str): txt 文件的路径。
 
     Returns:
         tuple: (标题, 正文文本) 或 (None, None) 如果失败。
     """
     try:
-        with open(html_filepath, 'r', encoding='utf-8') as f:
-            html_content = f.read()
+        with open(txt_filepath, 'r', encoding='utf-8') as f:
+            text_content = f.read()
 
-        soup = BeautifulSoup(html_content, 'lxml') # 或者使用 'html.parser'
+        # 使用文件名（不含扩展名）作为标题
+        title = os.path.basename(txt_filepath).replace('.txt', '')
 
-        # --- 提取标题 ---
-        title_tag = soup.find('title')
-        title_string = title_tag.string if title_tag else None
-        # 确保 title_string 不为 None 才调用 strip()
-        title = title_string.strip() if title_string else os.path.basename(html_filepath)
-        title = title.replace('.html', '') # 清理标题
+        # 清理文本：移除多余的空行
+        text = re.sub(r'\n\s*\n', '\n', text_content).strip()
 
-        # --- 定位正文内容 ---
-        # 根据之前的讨论，优先查找 <content> 或特定 class
-        content_tag = soup.find('content')
-        if not content_tag:
-            content_tag = soup.find('div', class_='rich_media_content') # 微信文章常见
-        if not content_tag:
-            content_tag = soup.find('article') # HTML5 语义标签
-        if not content_tag:
-            content_tag = soup.find('main') # HTML5 语义标签
-        if not content_tag:
-             content_tag = soup.find('body') # 最后尝试 body
-
-        if content_tag:
-            # 获取文本，尝试保留段落换行符
-            text = content_tag.get_text(separator='\n', strip=True)
-            # 移除多余的空行
-            text = re.sub(r'\n\s*\n', '\n', text).strip()
-            # 可选：进一步清理特定模式（如广告、页脚等）
-            text = text.replace('阅读原文', '').strip()
-            return title, text
-        else:
-            print(f"警告：在文件 {html_filepath} 中未找到明确的正文标签。")
-            return title, None # 返回标题，但文本为 None
+        return title, text
 
     except FileNotFoundError:
-        print(f"错误：文件 {html_filepath} 未找到。")
+        print(f"错误：文件 {txt_filepath} 未找到。")
         return None, None
     except Exception as e:
-        print(f"处理文件 {html_filepath} 时出错: {e}")
+        print(f"处理文件 {txt_filepath} 时出错: {e}")
         return None, None
 
 def split_text(text, chunk_size=500, chunk_overlap=50):
@@ -117,8 +91,8 @@ def split_text(text, chunk_size=500, chunk_overlap=50):
     return [c.strip() for c in chunks if c.strip()] # 返回非空块
 
 # --- 配置 ---
-html_directory = './data/' # **** 修改为你的 HTML 文件夹路径 ****
-output_json_path = './data/processed_data.json' # **** 输出 JSON 文件路径 ****
+txt_directory = './sources' # txt 文件夹路径
+output_json_path = './data/processed_data.json' # 输出 JSON 文件路径
 CHUNK_SIZE = 512  # 每个文本块的目标大小（字符数）
 CHUNK_OVERLAP = 50 # 相邻文本块的重叠大小（字符数）
 
@@ -127,20 +101,20 @@ all_data_for_milvus = []
 file_count = 0
 chunk_count = 0
 
-print(f"开始处理目录 '{html_directory}' 中的 HTML 文件...")
+print(f"开始处理目录 '{txt_directory}' 中的 txt 文件...")
 
 # 确保输出目录存在
 os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
 
-html_files = [f for f in os.listdir(html_directory) if f.endswith('.html')]
-print(f"找到 {len(html_files)} 个 HTML 文件。")
+txt_files = [f for f in os.listdir(txt_directory) if f.endswith('.txt')]
+print(f"找到 {len(txt_files)} 个 txt 文件。")
 
-for filename in html_files:
-    filepath = os.path.join(html_directory, filename)
+for filename in txt_files:
+    filepath = os.path.join(txt_directory, filename)
     print(f"  处理文件: {filename} ...")
     file_count += 1
 
-    title, main_text = extract_text_and_title_from_html(filepath)
+    title, main_text = extract_text_and_title_from_txt(filepath)
 
     if main_text:
         chunks = split_text(main_text, chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
