@@ -11,6 +11,7 @@ from load_data import DataLoader as DataLoaderClass
 from model import SentimentClassifier
 import torch.nn as nn
 import os
+from tqdm import tqdm
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
@@ -33,12 +34,12 @@ set_hf_mirrors()
 def evaluate(model, eval_loader, device):
     """
     评估模型性能
-    
+
     参数:
         model: 模型对象
         eval_loader: 评估数据加载器
         device: 计算设备（CPU/GPU）
-        
+
     返回:
         Tuple[float, float]: 平均损失和准确率
     """
@@ -46,21 +47,21 @@ def evaluate(model, eval_loader, device):
     total_loss = 0
     correct_predictions = 0
     total_predictions = 0
-    
+
     with torch.no_grad():
-        for batch in eval_loader:
+        for batch in tqdm(eval_loader, desc="评估中", leave=False):
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
-            
+
             outputs = model(input_ids, attention_mask)
             loss = nn.CrossEntropyLoss()(outputs, labels)
-            
+
             _, predictions = torch.max(outputs, dim=1)
             correct_predictions += torch.sum(predictions == labels)
             total_predictions += len(labels)
             total_loss += loss.item()
-            
+
     return total_loss / len(eval_loader), correct_predictions.double() / total_predictions
 
 def train(train_texts, train_labels, val_texts=None, val_labels=None):
@@ -88,13 +89,16 @@ def train(train_texts, train_labels, val_texts=None, val_labels=None):
     print(f"使用设备: {device}")
     
     # 初始化tokenizer和模型
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model_name,
+        trust_remote_code=False  # Qwen2不需要trust_remote_code
+    )
     
     # 确保tokenizer有padding token
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    model = SentimentClassifier(config.model_name, config.num_classes)
+    model = SentimentClassifier(config.model_name, config.num_classes, freeze_base=True)
     model.to(device)
     
     # 准备训练数据
@@ -124,39 +128,51 @@ def train(train_texts, train_labels, val_texts=None, val_labels=None):
     for epoch in range(config.num_epochs):
         model.train()
         total_loss = 0
-        
-        for batch in train_loader:
+
+        # 添加进度条
+        progress_bar = tqdm(train_loader, desc=f'Epoch {epoch + 1}/{config.num_epochs}')
+
+        for batch in progress_bar:
             optimizer.zero_grad()
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
-            
+
             outputs = model(input_ids, attention_mask)
             loss = nn.CrossEntropyLoss()(outputs, labels)
-            
+
+            # 检查 loss 是否为 nan 或 inf
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"\n警告: 检测到异常 loss 值: {loss.item()}")
+                print(f"输出统计: min={outputs.min().item():.4f}, max={outputs.max().item():.4f}")
+                continue
+
             loss.backward()
             # 梯度裁剪，防止梯度爆炸
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            
+
             optimizer.step()
             scheduler.step()
-            
+
             total_loss += loss.item()
-        
+
+            # 更新进度条显示当前loss
+            progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
+
         avg_train_loss = total_loss / len(train_loader)
         print(f'Epoch {epoch + 1}/{config.num_epochs}')
         print(f'Average training loss: {avg_train_loss:.4f}')
-        
+
         if val_texts is not None and val_labels is not None:
             val_loss, val_accuracy = evaluate(model, val_loader, device)
             print(f'Validation Loss: {val_loss:.4f}')
             print(f'Validation Accuracy: {val_accuracy:.4f}')
-            
+
             if val_accuracy > best_accuracy:
                 best_accuracy = val_accuracy
                 model.save_model(config.model_save_path)
                 print(f"保存新的最佳模型，准确率: {val_accuracy:.4f}")
-    
+
     return model
 
 def predict(text, model_path=None):
@@ -174,12 +190,15 @@ def predict(text, model_path=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # 加载tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    tokenizer = AutoTokenizer.from_pretrained(
+        config.model_name,
+        trust_remote_code=False  # Qwen2不需要trust_remote_code
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
     # 初始化并加载模型
-    model = SentimentClassifier(config.model_name, config.num_classes)
+    model = SentimentClassifier(config.model_name, config.num_classes, freeze_base=True)
     if model_path:
         model.load_model(model_path)
     model.to(device)
@@ -217,12 +236,19 @@ if __name__ == "__main__":
     
     # 分别加载训练集、验证集和测试集
     print("加载训练集...")
-    train_texts, train_labels = data_loader.load_csv("dataset/train.csv")
+    train_texts, train_labels = data_loader.load_csv("train.csv")
     print("加载验证集...")
-    val_texts, val_labels = data_loader.load_csv("dataset/dev.csv")
+    val_texts, val_labels = data_loader.load_csv("dev.csv")
     print("加载测试集...")
-    test_texts, test_labels = data_loader.load_csv("dataset/test.csv")
-    
+    test_texts, test_labels = data_loader.load_csv("test.csv")
+
+    # 限制训练集样本数量为10000
+    max_train_samples = 100
+    if len(train_texts) > max_train_samples:
+        print(f"限制训练集样本数量为 {max_train_samples}")
+        train_texts = train_texts[:max_train_samples]
+        train_labels = train_labels[:max_train_samples]
+
     # 打印数据集大小
     print(f"训练集: {len(train_texts)} 样本")
     print(f"验证集: {len(val_texts)} 样本")

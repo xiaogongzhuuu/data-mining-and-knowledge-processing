@@ -1,2 +1,3 @@
-export HF_ENDPOINT=https://hf-mirror.com
+#!/bin/zsh
+unset HF_ENDPOINT
 python main.py

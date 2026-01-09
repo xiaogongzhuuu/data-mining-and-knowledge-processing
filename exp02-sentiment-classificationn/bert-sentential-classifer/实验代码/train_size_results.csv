@@ -1,0 +1,5 @@
+train_size,best_val_accuracy,final_val_accuracy,final_train_accuracy
+500,0.902,0.902,0.99
+1000,0.894,0.868,0.989
+2000,0.903,0.865,0.979
+5000,0.909,0.895,0.997

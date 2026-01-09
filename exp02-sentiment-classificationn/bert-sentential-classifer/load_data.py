@@ -173,7 +173,7 @@ def load_data_from_dir(data_dir: str, file_type: str = 'csv') -> Tuple[List[str]
 if __name__ == "__main__":
     # 配置示例
     class Config:
-        data_path = "dataset/test.csv"  # 更新为正确的路径
+        data_path = "test.csv"  # 更新为正确的路径
         file_type = "csv"
         test_size = 0.1
         val_size = 0.1
