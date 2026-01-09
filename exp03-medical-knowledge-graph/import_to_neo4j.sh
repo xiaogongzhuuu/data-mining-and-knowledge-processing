@@ -34,4 +34,5 @@ MATCH (end:MedicalEntity {id: row.end_id})
 CREATE (start)-[r:RELATED_TO]->(end);
 "
 
-echo "数据导入完成！" 
+echo "数据导入完成！"
+

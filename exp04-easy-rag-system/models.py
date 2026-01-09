@@ -48,17 +48,28 @@ def load_embedding_model(model_name):
 
 @st.cache_resource
 def load_generation_model(model_name):
-    """Loads the Ollama API client."""
+    """Loads the Ollama API client. Returns model name if connected, None otherwise."""
     st.write(f"Using Ollama API for generation: {OLLAMA_MODEL}...")
     try:
-        # 测试 ollama 连接
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags")
+        # 测试 ollama 连接（设置较短的超时时间）
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
         if response.status_code == 200:
-            st.success(f"Ollama API connected. Using model: {OLLAMA_MODEL}")
+            st.success(f"✅ Ollama API connected. Using model: {OLLAMA_MODEL}")
             return OLLAMA_MODEL, None  # 返回模型名称，不需要 tokenizer
         else:
-            st.error(f"Failed to connect to Ollama API at {OLLAMA_BASE_URL}")
+            st.warning(f"⚠️ Failed to connect to Ollama API at {OLLAMA_BASE_URL} (HTTP {response.status_code})")
+            st.info("Continuing without generation capability. Search-only mode enabled.")
             return None, None
+    except requests.exceptions.ConnectionError:
+        st.warning(f"⚠️ Cannot connect to Ollama service at {OLLAMA_BASE_URL}")
+        st.info("Make sure Ollama is running with: `ollama serve`")
+        st.info("Continuing in search-only mode. You can still retrieve and view relevant documents.")
+        return None, None
+    except requests.exceptions.Timeout:
+        st.warning(f"⚠️ Ollama connection timeout")
+        st.info("Continuing in search-only mode.")
+        return None, None
     except Exception as e:
-        st.error(f"Failed to connect to Ollama API: {e}")
-        return None, None 
+        st.warning(f"⚠️ Failed to connect to Ollama API: {e}")
+        st.info("Continuing in search-only mode.")
+        return None, None

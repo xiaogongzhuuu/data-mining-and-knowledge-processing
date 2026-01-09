@@ -4,3 +4,6 @@ sentence-transformers
 transformers 
 torch 
 accelerate
+chromadb==1.4.0
+pydantic<2.0
+requests

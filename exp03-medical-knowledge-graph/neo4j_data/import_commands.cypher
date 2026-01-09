@@ -20,3 +20,4 @@ MATCH (n:MedicalEntity) WHERE n.type = 'Symptom' RETURN n;
 
 // 查看特定节点的关系
 MATCH (n:MedicalEntity {name: '糖尿病'})-[r]-(m) RETURN n, r, m;
+

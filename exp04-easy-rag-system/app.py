@@ -17,15 +17,20 @@ from config import (
 from data_utils import load_data
 from models import load_embedding_model, load_generation_model
 # Import ChromaDB functions
-from chroma_utils import get_chroma_client, setup_chroma_collection, index_data_if_needed, search_similar_documents
+from chroma_utils import get_chroma_client, setup_chroma_collection, index_data_if_needed
 from rag_core import generate_answer
 # Import optimization modules
-from retrieval_optimizer import hybrid_search, rerank_documents, remove_duplicate_documents
+from retrieval_optimizer import hybrid_search, remove_duplicate_documents
 
 # --- Streamlit UI 设置 ---
 st.set_page_config(layout="wide")
 st.title("📄 医疗 RAG 系统 (ChromaDB + Ollama)")
 st.markdown(f"使用 ChromaDB, `{EMBEDDING_MODEL_NAME}`, 和 Ollama `{OLLAMA_MODEL}`。")
+
+# --- 初始化变量（确保在所有代码路径中都有定义）---
+embedding_loaded = False
+generation_loaded = False
+collection_is_ready = False
 
 # --- 初始化与缓存 ---
 # 获取 ChromaDB 客户端 (如果未缓存则初始化)
@@ -39,11 +44,12 @@ if chroma_client:
     embedding_model = load_embedding_model(EMBEDDING_MODEL_NAME)
     generation_model, tokenizer = load_generation_model(GENERATION_MODEL_NAME)
 
-    # 检查所有组件是否成功加载
-    # 对于 ollama，tokenizer 可以为 None
-    models_loaded = embedding_model and generation_model
-
-    if collection_is_ready and models_loaded:
+    # 检查组件是否成功加载
+    # embedding_model 必须可用，generation_model 可选（可以在搜索模式下工作）
+    embedding_loaded = embedding_model is not None
+    generation_loaded = generation_model is not None
+    
+    if collection_is_ready and embedding_loaded:
         # 加载数据 (未缓存)
         pubmed_data = load_data(DATA_FILE)
 
@@ -60,9 +66,15 @@ if chroma_client:
         if not indexing_successful and not id_to_doc_map:
              st.error("数据索引失败或不完整，且没有文档映射。RAG 功能已禁用。")
         else:
+            # 显示当前模式信息
+            if generation_loaded:
+                st.success("✅ 系统处于完整 RAG 模式（搜索 + 生成）")
+            else:
+                st.info("🔍 系统处于搜索模式（仅检索，生成功能不可用）")
+            
             query = st.text_input("请提出关于已索引医疗文章的问题:", key="query_input")
 
-            if st.button("获取答案", key="submit_button") and query:
+            if st.button("搜索", key="submit_button") and query:
                 start_time = time.time()
 
                 # 1. 使用混合检索搜索相关文档
@@ -99,19 +111,25 @@ if chroma_client:
 
                         st.divider()
 
-                        # 3. 生成答案
-                        st.subheader("生成的答案:")
-                        with st.spinner("正在根据上下文生成答案..."):
-                            answer = generate_answer(query, retrieved_docs, generation_model, tokenizer)
-                            st.write(answer)
+                        # 3. 生成答案（如果生成模型可用）
+                        if generation_loaded:
+                            st.subheader("生成的答案:")
+                            with st.spinner("正在根据上下文生成答案..."):
+                                answer = generate_answer(query, retrieved_docs, generation_model, tokenizer)
+                                st.write(answer)
+                        else:
+                            st.info("💡 生成功能不可用。请启动 Ollama 服务以启用答案生成功能。")
 
                 end_time = time.time()
                 st.info(f"总耗时: {end_time - start_time:.2f} 秒")
 
     else:
-        st.error("加载模型或设置 ChromaDB collection 失败。请检查日志和配置。")
+        if not embedding_loaded:
+            st.error("❌ 嵌入模型加载失败。无法继续。")
+        if not collection_is_ready:
+            st.error("❌ ChromaDB collection 设置失败。请检查日志。")
 else:
-    st.error("初始化 ChromaDB 客户端失败。请检查日志。")
+    st.error("❌ 初始化 ChromaDB 客户端失败。请检查日志。")
 
 
 # --- 页脚/信息侧边栏 ---
@@ -124,3 +142,10 @@ st.sidebar.markdown(f"**嵌入模型:** `{EMBEDDING_MODEL_NAME}`")
 st.sidebar.markdown(f"**生成模型:** Ollama `{OLLAMA_MODEL}`")
 st.sidebar.markdown(f"**最大索引数:** `{MAX_ARTICLES_TO_INDEX}`")
 st.sidebar.markdown(f"**检索 Top K:** `{TOP_K}`")
+
+st.sidebar.header("模式信息")
+if generation_loaded:
+    st.sidebar.success("✅ 完整 RAG 模式")
+else:
+    st.sidebar.warning("🔍 搜索模式（无生成）")
+    st.sidebar.info("启动 Ollama: `ollama serve`")

@@ -1,61 +1,128 @@
 import streamlit as st
 import chromadb
-from chromadb.config import Settings
+from chromadb.utils import embedding_functions
 import os
+import sys
 
 # Import config variables including the global map
 from config import (
     MILVUS_LITE_DATA_PATH, COLLECTION_NAME, EMBEDDING_DIM,
-    MAX_ARTICLES_TO_INDEX, TOP_K, id_to_doc_map
+    MAX_ARTICLES_TO_INDEX, TOP_K, id_to_doc_map, EMBEDDING_MODEL_NAME
 )
+
+class DummyEmbeddingFunction(embedding_functions.EmbeddingFunction):
+    """
+    虚拟嵌入函数 - 这只是为了让 ChromaDB 不尝试下载默认模型。
+    实际的嵌入向量会在 index_data_if_needed 中预先计算。
+    """
+    def __call__(self, input):
+        """
+        返回虚拟嵌入（全零向量）。
+        这个函数不会被真正调用，因为我们总是提供预计算的嵌入。
+        """
+        if isinstance(input, str):
+            input = [input]
+        # 返回虚拟向量列表
+        return [[0.0] * EMBEDDING_DIM for _ in input]
 
 def get_chroma_client():
     """Initializes and returns a ChromaDB client."""
     try:
         st.write(f"Initializing ChromaDB client...")
-        # Use current directory for persistent storage
-        client = chromadb.PersistentClient(path=".")
-        st.success("ChromaDB client initialized!")
+        persist_dir = "./chroma_data"
+        if not os.path.exists(persist_dir):
+            os.makedirs(persist_dir, exist_ok=True)
+        
+        # 支持多个 chromadb 版本：优先使用 1.4.x 的 PersistentClient；否则回退到旧版 Client
+        client = None
+        if hasattr(chromadb, "PersistentClient"):
+            st.write("Using chromadb.PersistentClient()")
+            client = chromadb.PersistentClient(path=persist_dir)
+        else:
+            st.write("PersistentClient not found, trying chromadb.Client(...) fallback")
+            try:
+                # 在旧版本中通过 settings 启用持久化（duckdb+parquet）
+                settings = chromadb.config.Settings()
+                # 覆盖 persist_directory
+                try:
+                    settings.persist_directory = persist_dir
+                except Exception:
+                    # 某些版本的 Settings 可能不允许直接赋值，通过构造函数传参也可
+                    settings = chromadb.config.Settings(persist_directory=persist_dir)
+                # 如果存在 chroma_db_impl，设置为 duckdb+parquet 以启用持久化
+                try:
+                    settings.chroma_db_impl = "duckdb+parquet"
+                except Exception:
+                    pass
+                client = chromadb.Client(settings)
+            except Exception as e:
+                # 如果回退也失败，抛出以进入外层 except
+                raise
+        
+        st.success(f"ChromaDB client initialized! Data persisted to '{persist_dir}'")
         return client
     except Exception as e:
         st.error(f"Failed to initialize ChromaDB client: {e}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 def setup_chroma_collection(_client):
-    """Ensures the specified collection exists in ChromaDB."""
+    """Ensures the specified collection exists in ChromaDB, completely offline."""
     if not _client:
         st.error("ChromaDB client not available.")
         return False
     try:
         collection_name = COLLECTION_NAME
+        st.write(f"Setting up ChromaDB collection '{collection_name}'...")
 
-        # Try to get existing collection
+        # 首先尝试删除可能损坏的现有 collection
         try:
-            collection = _client.get_collection(name=collection_name)
-            st.write(f"Found existing collection: '{collection_name}'.")
-
-            # 检查是否使用余弦距离
-            metadata = collection.metadata
-            if metadata and metadata.get("hnsw:space") != "cosine":
-                st.warning(f"Collection uses '{metadata.get('hnsw:space')}' distance, should use 'cosine'.")
-                st.warning("Please delete chroma.sqlite3 and restart.")
-        except:
-            # Collection doesn't exist, create it
-            st.write(f"Collection '{collection_name}' not found. Creating...")
+            _client.delete_collection(name=collection_name)
+            st.write(f"Removed existing collection '{collection_name}'.")
+        except Exception as e:
+            st.write(f"No existing collection to remove (expected): {str(e)[:100]}")
+        
+        # 创建虚拟嵌入函数，以阻止 ChromaDB 自动下载模型
+        dummy_embedding_fn = DummyEmbeddingFunction()
+        
+        # 创建全新的 collection，使用虚拟嵌入函数
+        try:
             collection = _client.create_collection(
                 name=collection_name,
-                metadata={"hnsw:space": "cosine"}  # Use cosine similarity
+                metadata={"hnsw:space": "cosine"},
+                embedding_function=dummy_embedding_fn,
+                get_or_create=False  # 确保创建新的
             )
-            st.write(f"Collection '{collection_name}' created with cosine distance.")
+            st.success(f"✅ Collection '{collection_name}' created successfully.")
+        except Exception as create_error:
+            # 如果创建失败，可能是因为已存在，尝试获取
+            st.write(f"Create failed, attempting to get existing collection: {create_error}")
+            try:
+                collection = _client.get_collection(
+                    name=collection_name,
+                    embedding_function=dummy_embedding_fn
+                )
+                st.success(f"✅ Found existing collection '{collection_name}'.")
+            except Exception as get_error:
+                st.error(f"❌ Failed to create or get collection: {get_error}")
+                import traceback
+                st.error(f"Traceback: {traceback.format_exc()}")
+                return False
 
-        # Get current count
-        count = collection.count()
-        st.write(f"Collection '{collection_name}' ready. Current entity count: {count}")
+        # 验证 collection 是否可用
+        try:
+            count = collection.count()
+            st.write(f"Collection '{collection_name}' ready. Current document count: {count}")
+        except Exception as count_error:
+            st.warning(f"Could not verify collection count: {count_error}")
 
         return True
 
     except Exception as e:
         st.error(f"Error setting up ChromaDB collection '{COLLECTION_NAME}': {e}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         return False
 
 
@@ -70,14 +137,40 @@ def index_data_if_needed(client, data, embedding_model):
     collection_name = COLLECTION_NAME
     
     try:
-        collection = client.get_collection(name=collection_name)
+        # 创建虚拟嵌入函数
+        dummy_embedding_fn = DummyEmbeddingFunction()
+        
+        # 获取或创建 collection，使用虚拟嵌入函数
+        try:
+            collection = client.get_collection(
+                name=collection_name,
+                embedding_function=dummy_embedding_fn
+            )
+        except:
+            # 如果获取失败，尝试创建
+            collection = client.get_or_create_collection(
+                name=collection_name,
+                metadata={"hnsw:space": "cosine"},
+                embedding_function=dummy_embedding_fn
+            )
+        
         current_count = collection.count()
-    except:
-        st.write(f"Could not retrieve collection, attempting to setup.")
+    except Exception as e:
+        st.write(f"Could not retrieve collection, attempting to setup. Error: {e}")
         if not setup_chroma_collection(client):
             return False
-        collection = client.get_collection(name=collection_name)
-        current_count = 0
+        try:
+            dummy_embedding_fn = DummyEmbeddingFunction()
+            collection = client.get_collection(
+                name=collection_name,
+                embedding_function=dummy_embedding_fn
+            )
+            current_count = collection.count()
+        except Exception as get_error:
+            st.error(f"Failed to get collection after setup: {get_error}")
+            import traceback
+            st.error(f"Traceback: {traceback.format_exc()}")
+            return False
 
     st.write(f"Entities currently in ChromaDB collection '{collection_name}': {current_count}")
 
@@ -128,6 +221,7 @@ def index_data_if_needed(client, data, embedding_model):
             with st.spinner("Inserting..."):
                 try:
                     start_insert = time.time()
+                    # 传入预计算的 embeddings
                     collection.add(
                         ids=ids,
                         embeddings=embeddings.tolist(),
@@ -140,6 +234,8 @@ def index_data_if_needed(client, data, embedding_model):
                     return True
                 except Exception as e:
                     st.error(f"Error inserting data into ChromaDB: {e}")
+                    import traceback
+                    st.error(f"Traceback: {traceback.format_exc()}")
                     return False
         else:
             st.error("No valid text content found in the data to index.")
@@ -172,7 +268,12 @@ def search_similar_documents(client, query, embedding_model, top_k=None):
 
     collection_name = COLLECTION_NAME
     try:
-        collection = client.get_collection(name=collection_name)
+        # 创建虚拟嵌入函数
+        dummy_embedding_fn = DummyEmbeddingFunction()
+        collection = client.get_collection(
+            name=collection_name,
+            embedding_function=dummy_embedding_fn
+        )
         query_embedding = embedding_model.encode([query])[0]
 
         # Search in ChromaDB
@@ -199,4 +300,6 @@ def search_similar_documents(client, query, embedding_model, top_k=None):
         return hit_ids, distances
     except Exception as e:
         st.error(f"Error during ChromaDB search: {e}")
+        import traceback
+        st.error(f"Traceback: {traceback.format_exc()}")
         return [], []
