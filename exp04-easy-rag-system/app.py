@@ -105,6 +105,15 @@ def inject_custom_css():
         /* 隐藏 Streamlit 默认页脚 */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
+        [data-testid="stMetricValue"] {
+            font-size: 1.2rem !important;  /* 缩小数值字体，原默认约 2rem */
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.8rem !important;  /* 缩小标签字体 */
+        }
+        [data-testid="stMetricDelta"] {
+            font-size: 0.7rem !important;  /* 缩小状态（就绪/异常）字体 */
+        }
     </style>
     """, unsafe_allow_html=True)
 
@@ -173,7 +182,7 @@ if search_button:
         with st.status("🚀 正在处理您的请求...", expanded=True) as status:
             # 执行检索
             status.write("正在从 500+ 中医文献中检索相关信息...")
-            retrieved_docs, distances = hybrid_search(query, client, embedding_model, top_k_val)
+            retrieved_docs, distances = hybrid_search(query, client, embedding_model, TOP_K)
             
             if not retrieved_docs:
                 status.update(label="❌ 未能找到相关参考资料", state="error")
