@@ -6,21 +6,18 @@ from config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
 @st.cache_resource
 def load_embedding_model(model_name):
-    """Loads the sentence transformer model."""
-    st.write(f"Loading embedding model: {model_name}...")
-
-    # 强制使用本地缓存，禁用在线检查
+    """加载句子嵌入模型。"""
+    # 强制离线设置
     os.environ['TRANSFORMERS_OFFLINE'] = '1'
-    os.environ['HF_DATASETS_OFFLINE'] = '1'
     os.environ['HF_HUB_OFFLINE'] = '1'
-    os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
 
     try:
-        # 方法1: 尝试直接使用本地路径加载
         cache_path = os.path.abspath('./hf_cache')
-        st.write(f"Using cache folder: {cache_path}")
+        # 将调试信息输出到终端而非页面
+        print(f"DEBUG: Loading embedding model: {model_name}")
+        print(f"DEBUG: Using cache folder: {cache_path}")
 
-        # 检查本地模型路径
+        # 检查本地模型快照路径（根据你的实际路径调整）
         local_model_path = os.path.join(
             cache_path,
             'hub',
@@ -30,46 +27,31 @@ def load_embedding_model(model_name):
         )
 
         if os.path.exists(local_model_path):
-            st.write(f"Loading model from local path: {local_model_path}")
             model = SentenceTransformer(local_model_path, device='cpu')
-            st.success("Embedding model loaded from local cache.")
+            print("DEBUG: Embedding model loaded from local cache.")
             return model
-
-        # 方法2: 尝试使用 cache_folder 参数
-        st.write(f"Attempting to load with cache_folder parameter...")
-        model = SentenceTransformer(model_name, cache_folder=cache_path, device='cpu')
-        st.success("Embedding model loaded.")
-        return model
-
+        else:
+            # 回退到普通加载（依赖环境变量）
+            model = SentenceTransformer(model_name, cache_folder=cache_path, device='cpu')
+            print("DEBUG: Embedding model loaded.")
+            return model
     except Exception as e:
-        st.error(f"Failed to load embedding model: {e}")
-        st.info("Please ensure the model is downloaded and available in the cache folder.")
+        print(f"ERROR: Failed to load embedding model: {e}")
         return None
 
 @st.cache_resource
 def load_generation_model(model_name):
-    """Loads the Ollama API client. Returns model name if connected, None otherwise."""
-    st.write(f"Using Ollama API for generation: {OLLAMA_MODEL}...")
+    """加载 Ollama 客户端。仅在终端打印状态。"""
+    print(f"DEBUG: Checking Ollama API: {OLLAMA_MODEL}...")
     try:
-        # 测试 ollama 连接（设置较短的超时时间）
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=5)
+        # 测试 ollama 连接
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
         if response.status_code == 200:
-            st.success(f"✅ Ollama API connected. Using model: {OLLAMA_MODEL}")
-            return OLLAMA_MODEL, None  # 返回模型名称，不需要 tokenizer
+            print(f"DEBUG: Ollama API connected successfully.")
+            return OLLAMA_MODEL, None
         else:
-            st.warning(f"⚠️ Failed to connect to Ollama API at {OLLAMA_BASE_URL} (HTTP {response.status_code})")
-            st.info("Continuing without generation capability. Search-only mode enabled.")
+            print(f"DEBUG: Failed to connect to Ollama API (HTTP {response.status_code})")
             return None, None
-    except requests.exceptions.ConnectionError:
-        st.warning(f"⚠️ Cannot connect to Ollama service at {OLLAMA_BASE_URL}")
-        st.info("Make sure Ollama is running with: `ollama serve`")
-        st.info("Continuing in search-only mode. You can still retrieve and view relevant documents.")
-        return None, None
-    except requests.exceptions.Timeout:
-        st.warning(f"⚠️ Ollama connection timeout")
-        st.info("Continuing in search-only mode.")
-        return None, None
     except Exception as e:
-        st.warning(f"⚠️ Failed to connect to Ollama API: {e}")
-        st.info("Continuing in search-only mode.")
+        print(f"DEBUG: Ollama service not reachable: {e}")
         return None, None
